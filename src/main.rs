@@ -2,6 +2,7 @@ use md5::Md5;
 use sha2::{Sha256, Digest};
 use rayon::prelude::*;
 use itertools::Itertools;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::env;
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -27,6 +28,18 @@ fn detect_algo(hash: &str) -> Option<&'static str> {
     }
 }
 
+fn make_progress_bar(total: u64) -> ProgressBar {
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::with_template(
+            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({percent}%) {msg}"
+        )
+        .unwrap()
+        .progress_chars("#>-"),
+    );
+    pb
+}
+
 fn run_dictionary(algo: &str, target_hash: &str, wordlist_path: &str) {
     let content = fs::read_to_string(wordlist_path).expect("Failed to open wordlist file");
     let words: Vec<&str> = content.lines().collect();
@@ -34,18 +47,22 @@ fn run_dictionary(algo: &str, target_hash: &str, wordlist_path: &str) {
     let found = AtomicBool::new(false);
     let counter = AtomicUsize::new(0);
     let start = Instant::now();
+    let pb = make_progress_bar(words.len() as u64);
 
     words.par_iter().for_each(|word| {
         if found.load(Ordering::Relaxed) {
             return;
         }
         counter.fetch_add(1, Ordering::Relaxed);
+        pb.inc(1);
         let computed = compute_hash(algo, word);
         if computed == target_hash {
             found.store(true, Ordering::Relaxed);
-            println!("Found: {}", word);
+            pb.set_message(format!("Found: {}", word));
         }
     });
+
+    pb.finish();
 
     let elapsed = start.elapsed().as_secs_f64();
     let attempts = counter.load(Ordering::Relaxed);
@@ -67,7 +84,8 @@ fn run_bruteforce(algo: &str, target_hash: &str, max_len: usize) {
             break;
         }
 
-        println!("Trying length {}...", len);
+        let total: u64 = (charset.len() as u64).pow(len as u32);
+        println!("Trying length {} ({} combinations)...", len, total);
 
         let combos: Vec<String> = std::iter::repeat(charset.iter())
             .take(len)
@@ -75,17 +93,22 @@ fn run_bruteforce(algo: &str, target_hash: &str, max_len: usize) {
             .map(|combo| combo.into_iter().collect::<String>())
             .collect();
 
+        let pb = make_progress_bar(combos.len() as u64);
+
         combos.par_iter().for_each(|word| {
             if found.load(Ordering::Relaxed) {
                 return;
             }
             counter.fetch_add(1, Ordering::Relaxed);
+            pb.inc(1);
             let computed = compute_hash(algo, word);
             if computed == target_hash {
                 found.store(true, Ordering::Relaxed);
-                println!("Found: {}", word);
+                pb.set_message(format!("Found: {}", word));
             }
         });
+
+        pb.finish();
     }
 
     let elapsed = start.elapsed().as_secs_f64();
