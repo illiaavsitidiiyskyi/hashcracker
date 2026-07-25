@@ -3,10 +3,26 @@ use sha2::{Sha256, Digest};
 use rayon::prelude::*;
 use itertools::Itertools;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::env;
+use clap::Parser;
 use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
+
+#[derive(Parser)]
+#[command(name = "hashcracker")]
+#[command(about = "A multithreaded MD5/SHA256 hash cracker", long_about = None)]
+struct Cli {
+    /// Target hash to crack
+    hash: String,
+
+    /// Path to wordlist file (dictionary mode)
+    #[arg(short, long)]
+    wordlist: Option<String>,
+
+    /// Enable bruteforce mode with given max length
+    #[arg(short, long)]
+    bruteforce: Option<usize>,
+}
 
 fn compute_hash(algo: &str, word: &str) -> String {
     if algo == "md5" {
@@ -121,16 +137,9 @@ fn run_bruteforce(algo: &str, target_hash: &str, max_len: usize) {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let cli = Cli::parse();
+    let target_hash = cli.hash.to_lowercase();
 
-    if args.len() < 3 {
-        eprintln!("Usage:");
-        eprintln!("  Dictionary mode:  {} <hash> <wordlist_path>", args[0]);
-        eprintln!("  Bruteforce mode:  {} <hash> --bruteforce <max_length>", args[0]);
-        return;
-    }
-
-    let target_hash = args[1].to_lowercase();
     let algo = match detect_algo(&target_hash) {
         Some(a) => a,
         None => {
@@ -140,13 +149,11 @@ fn main() {
     };
     println!("Detected algorithm: {}", algo);
 
-    if args[2] == "--bruteforce" {
-        let max_len: usize = args.get(3)
-            .expect("Provide max length after --bruteforce")
-            .parse()
-            .expect("Max length must be a number");
+    if let Some(max_len) = cli.bruteforce {
         run_bruteforce(algo, &target_hash, max_len);
+    } else if let Some(wordlist) = cli.wordlist {
+        run_dictionary(algo, &target_hash, &wordlist);
     } else {
-        run_dictionary(algo, &target_hash, &args[2]);
+        eprintln!("Specify either --wordlist <path> or --bruteforce <max_length>");
     }
 }
